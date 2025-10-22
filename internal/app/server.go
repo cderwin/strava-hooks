@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	authUrl     = "https://www.strava.com/oauth/authorize"
-	tokenUrl    = "https://www.strava.com/oauth/token"
+	authUrl  = "https://www.strava.com/oauth/authorize"
+	tokenUrl = "https://www.strava.com/oauth/token"
 )
 
 type TokenResponse struct {

@@ -6,4 +6,3 @@ func main() {
 	server := app.NewServer()
 	server.RunForever()
 }
-

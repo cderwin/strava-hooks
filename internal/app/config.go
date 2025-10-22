@@ -3,11 +3,11 @@ package app
 import (
 	"log"
 	"os"
-	)
+)
 
 type Config struct {
-	BaseUrl string
-	StravaClientId string
+	BaseUrl            string
+	StravaClientId     string
 	StravaClientSecret string
 }
 
