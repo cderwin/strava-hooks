@@ -1,6 +1,6 @@
 package main
 
-import "internal/strava"
+import "github.com/cderwin/strava-hooks/internal/strava"
 
 func main() {
 	strava.RunServer()
