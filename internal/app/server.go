@@ -1,4 +1,4 @@
-package strava
+package app
 
 import (
 	"encoding/json"
@@ -7,19 +7,12 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 )
 
 const (
 	authUrl     = "https://www.strava.com/oauth/authorize"
 	tokenUrl    = "https://www.strava.com/oauth/token"
-	redirectUrl = "http://localhost:8080/callback"
-)
-
-var (
-	clientId     = os.Getenv("STRAVA_CLIENT_ID")
-	clientSecret = os.Getenv("STRAVA_CLIENT_SECRET")
 )
 
 type TokenResponse struct {
@@ -34,30 +27,36 @@ type TokenResponse struct {
 	} `json:"athlete"`
 }
 
-func RunServer() {
-	if clientId == "" || clientSecret == "" {
-		log.Fatal("STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET must be set")
-	}
+type Server struct {
+	config Config
+}
 
+func NewServer() Server {
+	config := LoadConfig()
+	return Server{config: config}
+}
+
+func (s *Server) RunForever() {
 	http.HandleFunc("/healthcheck", handleHealthcheck)
-	http.HandleFunc("/login", handleLogin)
-	http.HandleFunc("/callback", handleCallback)
+	http.HandleFunc("/login", s.handleLogin)
+	http.HandleFunc("/callback", s.handleCallback)
 
 	log.Println("Server starting on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 type HealthcheckResponse struct {
-	ok bool
+	Ok bool `json:"ok"`
 }
 
 func handleHealthcheck(w http.ResponseWriter, req *http.Request) {
-	json.NewEncoder(w).Encode(HealthcheckResponse{ok: true})
+	json.NewEncoder(w).Encode(HealthcheckResponse{Ok: true})
 }
 
-func handleLogin(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	redirectUrl := fmt.Sprintf("%s/callback", s.config.BaseUrl)
 	params := url.Values{}
-	params.Add("client_id", clientId)
+	params.Add("client_id", s.config.StravaClientId)
 	params.Add("redirect_uri", redirectUrl)
 	params.Add("response_type", "code")
 	params.Add("scope", "read,activity:read_all")
@@ -66,7 +65,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authorizationURL, http.StatusFound)
 }
 
-func handleCallback(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	// Get the authorization code from query params
 	code := r.URL.Query().Get("code")
 	if code == "" {
@@ -75,7 +74,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Exchange code for access token
-	token, err := exchangeCode(code)
+	token, err := exchangeCode(code, &s.config)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to exchange code: %v", err), http.StatusInternalServerError)
 		return
@@ -99,10 +98,10 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, html)
 }
 
-func exchangeCode(code string) (*TokenResponse, error) {
+func exchangeCode(code string, config *Config) (*TokenResponse, error) {
 	data := url.Values{}
-	data.Set("client_id", clientId)
-	data.Set("client_secret", clientSecret)
+	data.Set("client_id", config.StravaClientId)
+	data.Set("client_secret", config.StravaClientSecret)
 	data.Set("code", code)
 	data.Set("grant_type", "authorization_code")
 

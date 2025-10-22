@@ -1,8 +1,9 @@
 package main
 
-import "github.com/cderwin/strava-hooks/internal/strava"
+import "github.com/cderwin/strava-hooks/internal/app"
 
 func main() {
-	strava.RunServer()
+	server := app.NewServer()
+	server.RunForever()
 }
 
