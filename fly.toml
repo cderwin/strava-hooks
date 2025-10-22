@@ -12,7 +12,7 @@ primary_region = 'sjc'
 
 [env]
   PORT = '8080'
-  BASE_URL = "https://strava-hooks.fly.dev"
+  APP_BASE_URL = "https://strava-hooks.fly.dev"
 
 [http_service]
   internal_port = 8080
