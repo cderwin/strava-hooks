@@ -10,4 +10,5 @@ RUN go build -v -o /run-app .
 FROM debian:bookworm
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /run-app /usr/local/bin/
+COPY /static /usr/src/static
 CMD ["run-app"]
