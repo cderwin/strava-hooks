@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"io"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/gommon/log"
 )
 
 const (
@@ -77,20 +77,27 @@ func EstablishSubscriptions(config *Config) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		var currentSubscription SubscriptionsResponse
-		err := json.NewDecoder(resp.Body).Decode(&currentSubscription)
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			slog.Error("error fetching subscription: decoding response failed", "err", err)
+			slog.Error("Error fetching subscription: reading body failed", "err", err)
+		}
+
+		var currentSubscriptions []SubscriptionsResponse
+		err = json.Unmarshal(body, &currentSubscriptions)
+		if err != nil {
+			slog.Error("error fetching subscription: decoding response failed", "err", err, "body", string(body))
 			return
 		}
 
-		slog.Info("fetched current subscription", "subscription_id", currentSubscription.Id)
-		return
+		if len(currentSubscriptions) > 0 {
+			slog.Info("fetched current subscription", "subscription_id", currentSubscriptions[0].Id)
+			return
+		}
 	} else {
-		log.Warn("no existing subscription found, will attempt to create one", "status_code", resp.StatusCode)
+		slog.Warn("error fetching subscription: non-200 status code", "status_code", resp.StatusCode)
 	}
 
-	slog.Info("creating new subscription")
+	slog.Info("no existing subscription found, will attempt to create one")
 	formData := url.Values{}
 	formData.Add("client_id", config.StravaClientId)
 	formData.Add("client_secret", config.StravaClientSecret)
