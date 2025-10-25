@@ -17,7 +17,7 @@ const (
 
 type PushEvent struct {
 	ObjectType string `json:"object_type"`
-	ObjectId string `json:"object_id"`
+	ObjectId int `json:"object_id"`
 	AspectType string `json:"aspect_type"`
 	Updates map[string]bool `json:"updates"`
 	OwnerId int `json:"owner_id"`
