@@ -2,12 +2,13 @@ package app
 
 import (
 	"context"
-	"net/http"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -16,12 +17,19 @@ const (
 )
 
 type ServerState struct {
-	config Config
+	config     Config
+	tokenStore TokenStore
 }
 
 func NewServer() ServerState {
 	config := LoadConfig()
-	return ServerState{config: config}
+	redisOptions, err := redis.ParseURL(config.UpstashRedisUrl)
+	if err != nil {
+		slog.Error("Cannot parse redis url", "upstash_redis_url", config.UpstashRedisUrl, "err", err)
+		panic(err)
+	}
+	redisClient := redis.NewClient(redisOptions)
+	return ServerState{config: config, tokenStore: TokenStore{client: redisClient, ctx: context.Background(), config: &config}}
 }
 
 func (s *ServerState) RunForever() {
@@ -70,10 +78,9 @@ func (s *ServerState) RunForever() {
 }
 
 func handleHealthcheck(c echo.Context) error {
-	response := struct{
+	response := struct {
 		Ok bool `json:"ok"`
 	}{Ok: true}
 	c.JSON(http.StatusOK, response)
 	return nil
 }
-

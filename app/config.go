@@ -1,17 +1,19 @@
 package app
 
 import (
+	"crypto/rand"
 	"encoding/hex"
 	"log"
+	"log/slog"
 	"os"
-	"crypto/rand"
 )
 
 type Config struct {
 	BaseUrl            string
 	StravaClientId     string
 	StravaClientSecret string
-	VerifyToken string
+	VerifyToken        string
+	UpstashRedisUrl    string
 }
 
 func randomString(byteLength int) string {
@@ -29,7 +31,14 @@ func LoadConfig() Config {
 	clientId := os.Getenv("STRAVA_CLIENT_ID")
 	clientSecret := os.Getenv("STRAVA_CLIENT_SECRET")
 	if clientId == "" || clientSecret == "" {
-		log.Fatal("STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET must be set")
+		slog.Error("STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET must be set")
+		panic("invalid configuration")
 	}
-	return Config{BaseUrl: baseUrl, StravaClientId: clientId, StravaClientSecret: clientSecret, VerifyToken: randomString(16)}
+
+	upstashRedisUrl := os.Getenv("UPSTASH_REDIS_URL")
+	if upstashRedisUrl == "" {
+		slog.Error("UPSTASH_REDIS_URL environment variable must be set")
+		panic("invalid configuration")
+	}
+	return Config{BaseUrl: baseUrl, StravaClientId: clientId, StravaClientSecret: clientSecret, VerifyToken: randomString(16), UpstashRedisUrl: upstashRedisUrl}
 }
