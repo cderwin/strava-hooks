@@ -3,7 +3,6 @@ package app
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"log"
 	"log/slog"
 	"os"
 )
