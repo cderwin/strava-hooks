@@ -3,10 +3,10 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"io"
 
 	"github.com/labstack/echo/v4"
 )
@@ -16,19 +16,18 @@ const (
 )
 
 type PushEvent struct {
-	ObjectType string `json:"object_type"`
-	ObjectId int `json:"object_id"`
-	AspectType string `json:"aspect_type"`
-	Updates map[string]bool `json:"updates"`
-	OwnerId int `json:"owner_id"`
-	SubscriptionId int `json:"subscription_id"`
-	EventTime int `json:"event_time"`
+	ObjectType     string          `json:"object_type"`
+	ObjectId       int             `json:"object_id"`
+	AspectType     string          `json:"aspect_type"`
+	Updates        map[string]bool `json:"updates"`
+	OwnerId        int             `json:"owner_id"`
+	SubscriptionId int             `json:"subscription_id"`
+	EventTime      int             `json:"event_time"`
 }
 
 type SubscriptionsResponse struct {
 	Id int `json:"id"`
 }
-
 
 func (s *ServerState) handleSubscriptionCallback(c echo.Context) error {
 	if c.QueryParam("hub.verify_token") != s.config.VerifyToken {
