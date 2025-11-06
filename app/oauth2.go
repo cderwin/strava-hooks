@@ -64,11 +64,11 @@ func (s *ServerState) handleCallback(c echo.Context) error {
 
 	// Display success page with token info
 	html, err := os.ReadFile("/usr/src/static/confirmation.html")
-    if err != nil {
+	if err != nil {
 		slog.Error("cannot load confirmation template", "err", err)
 		return err
-    }
-    
+	}
+
 	c.HTMLBlob(http.StatusOK, html)
 	return nil
 }
