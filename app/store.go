@@ -19,7 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type TokenStore struct {
+type Store struct {
 	client *redis.Client
 	ctx    context.Context
 	config *Config
@@ -31,8 +31,8 @@ type TokenInfo struct {
 	ExpiresAt    int
 }
 
-func (ts *TokenStore) FetchToken(AthleteId int) (string, error) {
-	tokenInfo, err := ts.fetchTokenInfo(AthleteId)
+func (s *Store) FetchToken(AthleteId int) (string, error) {
+	tokenInfo, err := s.fetchTokenInfo(AthleteId)
 	if err != nil {
 		return "", err
 	}
@@ -40,21 +40,21 @@ func (ts *TokenStore) FetchToken(AthleteId int) (string, error) {
 	return tokenInfo.AccessToken, nil
 }
 
-func (ts *TokenStore) SaveToken(athleteId int, token TokenInfo) error {
+func (s *Store) SaveToken(athleteId int, token TokenInfo) error {
 	authKey := fmt.Sprintf("athlete:%d:strava-token", athleteId)
 	expiresAtString := fmt.Sprintf("%d", token.ExpiresAt)
 
-	encryptedAccessToken, err := encryptToken(token.AccessToken, ts.config.Secret)
+	encryptedAccessToken, err := encryptToken(token.AccessToken, s.config.Secret)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt access token: %w", err)
 	}
 
-	encryptedRefreshToken, err := encryptToken(token.RefreshToken, ts.config.Secret)
+	encryptedRefreshToken, err := encryptToken(token.RefreshToken, s.config.Secret)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt refresh token: %w", err)
 	}
 
-	err = ts.client.HSet(ts.ctx, authKey, "access_token", encryptedAccessToken, "refresh_token", encryptedRefreshToken, "expires_at", expiresAtString).Err()
+	err = s.client.HSet(s.ctx, authKey, "access_token", encryptedAccessToken, "refresh_token", encryptedRefreshToken, "expires_at", expiresAtString).Err()
 	if err != nil {
 		slog.Error("error saving token", "err", err)
 		return err
@@ -64,10 +64,10 @@ func (ts *TokenStore) SaveToken(athleteId int, token TokenInfo) error {
 	return nil
 }
 
-func (ts *TokenStore) fetchTokenInfo(athleteId int) (*TokenInfo, error) {
+func (s *Store) fetchTokenInfo(athleteId int) (*TokenInfo, error) {
 	authKey := fmt.Sprintf("athlete:%d:strava-token", athleteId)
 	var tokenInfo TokenInfo
-	err := ts.client.HMGet(ts.ctx, authKey, "access_token", "refresh_token", "expires_at").Scan(&tokenInfo)
+	err := s.client.HMGet(s.ctx, authKey, "access_token", "refresh_token", "expires_at").Scan(&tokenInfo)
 	if err != nil {
 		if err == redis.Nil {
 			slog.Error("fetch token error: athlete not found", "athlete_id", athleteId)
@@ -78,19 +78,19 @@ func (ts *TokenStore) fetchTokenInfo(athleteId int) (*TokenInfo, error) {
 		return nil, err
 	}
 
-	tokenInfo.AccessToken, err = decryptToken(tokenInfo.AccessToken, ts.config.Secret)
+	tokenInfo.AccessToken, err = decryptToken(tokenInfo.AccessToken, s.config.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt access token: %w", err)
 	}
 
-	tokenInfo.RefreshToken, err = decryptToken(tokenInfo.RefreshToken, ts.config.Secret)
+	tokenInfo.RefreshToken, err = decryptToken(tokenInfo.RefreshToken, s.config.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt secret token: %w", err)
 	}
 
 	if int64(tokenInfo.ExpiresAt) < time.Now().Unix() {
 		slog.Info("token expired, refreshing token", "athlete_id", athleteId)
-		newTokenInfo, err := ts.refreshToken(athleteId, tokenInfo)
+		newTokenInfo, err := s.refreshToken(athleteId, tokenInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -100,10 +100,10 @@ func (ts *TokenStore) fetchTokenInfo(athleteId int) (*TokenInfo, error) {
 	return &tokenInfo, nil
 }
 
-func (ts *TokenStore) refreshToken(AthleteId int, Token TokenInfo) (*TokenInfo, error) {
+func (s *Store) refreshToken(AthleteId int, Token TokenInfo) (*TokenInfo, error) {
 	queryParams := url.Values{}
-	queryParams.Add("client_id", ts.config.StravaClientId)
-	queryParams.Add("client_secret", ts.config.StravaClientSecret)
+	queryParams.Add("client_id", s.config.StravaClientId)
+	queryParams.Add("client_secret", s.config.StravaClientSecret)
 	queryParams.Add("grant_type", "refresh_token")
 	queryParams.Add("refresh_token", Token.RefreshToken)
 	resp, err := http.PostForm(tokenUrl, queryParams)
@@ -119,7 +119,7 @@ func (ts *TokenStore) refreshToken(AthleteId int, Token TokenInfo) (*TokenInfo, 
 		return nil, err
 	}
 
-	ts.SaveToken(AthleteId, newToken)
+	s.SaveToken(AthleteId, newToken)
 	return &newToken, nil
 }
 

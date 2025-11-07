@@ -18,7 +18,7 @@ const (
 
 type ServerState struct {
 	config     Config
-	tokenStore TokenStore
+	store Store
 }
 
 func NewServer() ServerState {
@@ -29,7 +29,7 @@ func NewServer() ServerState {
 		panic(err)
 	}
 	redisClient := redis.NewClient(redisOptions)
-	return ServerState{config: config, tokenStore: TokenStore{client: redisClient, ctx: context.Background(), config: &config}}
+	return ServerState{config: config, store: Store{client: redisClient, ctx: context.Background(), config: &config}}
 }
 
 func (s *ServerState) RunForever() {

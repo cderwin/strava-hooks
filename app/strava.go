@@ -1,11 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tkrajina/gpxgo/gpx"
@@ -17,25 +21,31 @@ const (
 	xsiSchemaLoc = "http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
 )
 
+var (
+	DebugSerializeHTTPResponse = false
+)
+
 type StravaActivity struct {
-	Id             int        `json:"id"`
-	AthleteId      int        `json:"athlete.id"`
+	Id      int `json:"id"`
+	Athlete struct {
+		Id int `json:"id"`
+	} `json:"athlete"`
 	Name           string     `json:"name"`
-	Distance       int        `json:"distance"`
+	Distance       float64    `json:"distance"`
 	MovingTime     int        `json:"moving_time"`
 	ElapsedTime    int        `json:"elapsed_time"`
 	ElevationGain  float32    `json:"total_elevation_gain"`
 	Type           string     `json:"type"`
 	StartDate      string     `json:"start_date"`
-	StartLatLon    [2]float32 `json:"start_latlng"`
-	EndLatLon      [2]float32 `json:"end_latlng"`
+	StartLatLon    [2]float64 `json:"start_latlng"`
+	EndLatLon      [2]float64 `json:"end_latlng"`
 	Description    string     `json:"description"`
-	Calories       float32    `json:"calories"`
-	RelativeEffort float32    `json:"suffer_score"`
+	Calories       float64    `json:"calories"`
+	RelativeEffort float64    `json:"suffer_score"`
 }
 
 type StravaStreamPoint struct {
-	Time        int64
+	Time        float64
 	Latitude    float64
 	Longitude   float64
 	Altitude    float64
@@ -52,42 +62,43 @@ type GpxMetadata struct {
 	UseTemperature bool
 }
 
-func GetActivity(ActivityId string, Token string) (StravaActivity, error) {
-	url := fmt.Sprintf(ActivityUrl, ActivityId)
-	request, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return StravaActivity{}, err
+type RawStream struct {
+	Type         string          `json:"type"`
+	Data         json.RawMessage `json:"data"`
+	OriginalSize int             `json:"original_size"`
+}
+
+type StravaClient struct {
+	client http.Client
+	Token  string
+}
+
+func NewStravaClient(token string) StravaClient {
+	debug := os.Getenv("DEBUG_STRAVA_RESPONSE_BODY")
+	if debug != "" && strings.ToLower(debug) != "false" {
+		DebugSerializeHTTPResponse = true
 	}
 
-	request.Header["Authorization"] = []string{fmt.Sprintf("Bearer %s", Token)}
-	response, err := http.DefaultClient.Do(request)
+	return StravaClient{
+		client: http.Client{},
+		Token:  token,
+	}
+}
+
+func (c *StravaClient) GetActivity(activityId string) (StravaActivity, error) {
+	url := fmt.Sprintf(ActivityUrl, activityId)
+	body, err := c.performRequest("GET", url, nil)
 	if err != nil {
-		return StravaActivity{}, err
+		return StravaActivity{}, fmt.Errorf("error fetching activity: %w", err)
 	}
 
 	var activity StravaActivity
-	json.NewDecoder(response.Body).Decode(&activity)
+	json.NewDecoder(body).Decode(&activity)
 	return activity, nil
 }
 
-type singleStreamResponse struct {
-	Type         string    `json:"type"`
-	Data         []float64 `json:"data"`
-	OriginalSize int       `json:"original_size"`
-}
-
-type streamsResponse struct {
-	Time        *singleStreamResponse
-	Distance    *singleStreamResponse
-	Altitude    *singleStreamResponse
-	LatLng      *singleStreamResponse
-	HeartRate   *singleStreamResponse
-	Temperature *singleStreamResponse
-	Size        int
-}
-
-func DownloadActivity(activityId string, token string, path string, metadata GpxMetadata) error {
-	streamPoints, err := getActivityStream(activityId, token)
+func (c *StravaClient) DownloadActivity(activityId string, path string, metadata GpxMetadata) error {
+	streamPoints, err := c.getActivityStream(activityId)
 	if err != nil {
 		return err
 	}
@@ -102,70 +113,61 @@ func DownloadActivity(activityId string, token string, path string, metadata Gpx
 	return err
 }
 
-func getActivityStream(ActivityId string, Token string) ([]StravaStreamPoint, error) {
-	url := fmt.Sprintf(StreamsUrl, ActivityId)
-	request, err := http.NewRequest("GET", url, nil)
+func (c *StravaClient) getActivityStream(activityId string) ([]StravaStreamPoint, error) {
+	url := fmt.Sprintf(StreamsUrl, activityId)
+	body, err := c.performRequest("GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error fetching activity streams: %w", err)
 	}
 
-	request.Header["Authorization"] = []string{fmt.Sprintf("Bearer %s", Token)}
-	response, err := http.DefaultClient.Do(request)
+	var activityStreams []RawStream
+	err = json.NewDecoder(body).Decode(&activityStreams)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error decoding streams: %w", err)
 	}
 
-	var activityStreams []singleStreamResponse
-	err = json.NewDecoder(response.Body).Decode(&activityStreams)
-	if err != nil {
-		return nil, err
-	}
-
-	var streams streamsResponse
-	streams.Size = activityStreams[0].OriginalSize
-	for _, singleStream := range activityStreams {
-		// verify sizes of other streams
-		if singleStream.OriginalSize != streams.Size {
-			return nil, fmt.Errorf("error validating stream \"%s\": size (%d) does not match size of first stream (%d)", singleStream.Type, singleStream.OriginalSize, streams.Size)
+	originalSize := activityStreams[0].OriginalSize
+	streamPoints := make([]StravaStreamPoint, originalSize)
+	for _, rawStream := range activityStreams {
+		var streamData any
+		err := json.Unmarshal(rawStream.Data, &streamData)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding stream data: %w", err)
 		}
 
-		if len(singleStream.Data) != streams.Size {
-			return nil, fmt.Errorf("error validating stream \"%s\": size (%d) does not match original_size metadata (%d)", singleStream.Type, len(singleStream.Data), singleStream.OriginalSize)
+		streamLength := len(streamData.([]any))
+		if streamLength != originalSize {
+			return nil, fmt.Errorf("error validating stream \"%s\": size (%d) does not match size of first stream (%d)", rawStream.Type, streamLength, originalSize)
 		}
 
-		switch singleStream.Type {
-		case "distance":
-			streams.Distance = &singleStream
-		case "time":
-			streams.Time = &singleStream
-		case "latlng":
-			streams.LatLng = &singleStream
-		case "altitude":
-			streams.Altitude = &singleStream
-		case "heartrate":
-			streams.HeartRate = &singleStream
-		case "temp":
-			streams.Temperature = &singleStream
-		default:
-			return nil, fmt.Errorf("unrecognized stream type: %s", singleStream.Type)
+		if streamLength != rawStream.OriginalSize {
+			return nil, fmt.Errorf("error validating stream \"%s\": size (%d) does not match original_size metadata (%d)", rawStream.Type, streamLength, rawStream.OriginalSize)
+		}
+
+		for i, item := range streamData.([]any) {
+			if rawStream.Type == "latlng" {
+				latLngData := item.([]any)
+				streamPoints[i].Latitude = latLngData[0].(float64)
+				streamPoints[i].Longitude = latLngData[1].(float64)
+			} else {
+				switch rawStream.Type {
+				case "distance":
+					streamPoints[i].Distance = item.(float64)
+				case "time":
+					streamPoints[i].Time = item.(float64)
+				case "altitude":
+					streamPoints[i].Altitude = item.(float64)
+				case "heartrate":
+					streamPoints[i].HeartRate = item.(float64)
+				case "temp":
+					streamPoints[i].Temperature = item.(float64)
+				default:
+					return nil, fmt.Errorf("unrecognized stream type: %s", rawStream.Type)
+				}
+			}
 		}
 	}
-
-	return streamPointsFromResponse(streams), nil
-}
-
-func streamPointsFromResponse(streams streamsResponse) []StravaStreamPoint {
-	streamPoints := make([]StravaStreamPoint, streams.Size)
-	for i := range streams.Size {
-		streamPoints[i].Time = int64(streams.Time.Data[i])
-		streamPoints[i].Distance = float64(streams.Distance.Data[i])
-		streamPoints[i].Altitude = float64(streams.Altitude.Data[i])
-		streamPoints[i].HeartRate = float64(streams.HeartRate.Data[i])
-		streamPoints[i].Temperature = float64(streams.Temperature.Data[i])
-		streamPoints[i].Latitude = float64(streams.LatLng.Data[i])
-		streamPoints[i].Longitude = float64(streams.LatLng.Data[i])
-	}
-	return streamPoints
+	return streamPoints, nil
 }
 
 func buildGpx(StreamPoints []StravaStreamPoint, metadata GpxMetadata) (gpx.GPX, error) {
@@ -187,11 +189,49 @@ func buildGpx(StreamPoints []StravaStreamPoint, metadata GpxMetadata) (gpx.GPX, 
 			extension.Nodes = append(extension.Nodes, node)
 		}
 
-		gpxPoint := gpx.GPXPoint{Point: point, Timestamp: time.Unix(streamPoint.Time, 0), Extensions: extension}
+		timestamp := time.Unix(int64(streamPoint.Time), int64(streamPoint.Time*1_000_000_000))
+		gpxPoint := gpx.GPXPoint{Point: point, Timestamp: timestamp, Extensions: extension}
 		trackSegment.AppendPoint(&gpxPoint)
 	}
 
 	gpxTrack := gpx.GPXTrack{Name: metadata.Name, Type: metadata.Type, Segments: []gpx.GPXTrackSegment{trackSegment}}
 	gpx := gpx.GPX{XmlSchemaLoc: xsiSchemaLoc, Attrs: gpx.NewGPXAttributes(xmlNsAttrs), Version: "1.1", Creator: "strava-hooks.fly.dev", Time: &metadata.Time, Tracks: []gpx.GPXTrack{gpxTrack}}
 	return gpx, nil
+}
+
+func (c *StravaClient) performRequest(method string, url string, body io.Reader) (io.Reader, error) {
+	request, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+
+	request.Header["Authorization"] = []string{fmt.Sprintf("Bearer %s", c.Token)}
+	response, err := c.client.Do(request)
+	if err != nil {
+		slog.Error("unknown http exception", "method", method, "url", url, "err", err)
+		return nil, fmt.Errorf("http request failed: unknown error: %w", err)
+	}
+
+	// saves response body to file for debugging when flag is set
+	var bodyReader io.Reader = response.Body
+	if DebugSerializeHTTPResponse {
+		bodyPath := "debug.txt"
+		slog.Debug("serializing response body for debugging", "method", method, "url", url, "body_path", bodyPath)
+
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			slog.Error("http response body failed on read", "method", method, "url", url, "err", err)
+			return nil, fmt.Errorf("http request failed, error reading body: %w", err)
+		}
+
+		os.WriteFile(bodyPath, body, 0644)
+		bodyReader = bytes.NewReader(body)
+	}
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		slog.Error("http response received with bad status_code", "method", method, "url", url, "status_code", response.StatusCode)
+		return nil, fmt.Errorf("http request failed, invalid status %d", response.StatusCode)
+	}
+
+	return bodyReader, nil
 }

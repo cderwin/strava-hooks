@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/cderwin/strava-hooks/app"
-	"github.com/tkrajina/gpxgo/gpx"
 	"github.com/urfave/cli/v3"
 )
 
@@ -33,9 +34,9 @@ func main() {
 				Destination: &activityId,
 			},
 			&cli.StringFlag{
-				Name: "output",
-				Aliases: []string{"o"},
-				Required: true,
+				Name:        "output",
+				Aliases:     []string{"o"},
+				Required:    true,
 				Destination: &outputPath,
 			},
 		},
@@ -53,23 +54,29 @@ func main() {
 	}
 }
 
-func DownloadActivityGpx(ActivityId string, Token string, Path string) error {
-	streamPoints, err := app.GetActivityStream(ActivityId, Token)
+func DownloadActivityGpx(activityId string, token string, path string) error {
+	client := app.NewStravaClient(token)
+	activity, err := client.GetActivity(activityId)
 	if err != nil {
-		return err
+		panic(fmt.Errorf("failed to fetch activity: %w", err))
 	}
 
-	gpxConfig := app.GpxConfig{}
-	GPX, err := app.BuildGpx(streamPoints, gpxConfig)
+	startTime, err := time.Parse(time.RFC3339, activity.StartDate)
 	if err != nil {
-		return err
+		panic(fmt.Errorf("failed to parse activity start time: %w", err))
 	}
 
-	xmlBytes, err := GPX.ToXml(gpx.ToXmlParams{})
-	if err != nil {
-		return err
+	metadata := app.GpxMetadata{
+		Name:           activity.Name,
+		Type:           activity.Type,
+		Time:           startTime,
+		UseHeartRate:   true,
+		UseTemperature: true,
 	}
 
-	err = os.WriteFile(Path, xmlBytes, 0644)
-	return err
+	err = client.DownloadActivity(activityId, path, metadata)
+	if err != nil {
+		panic(fmt.Errorf("failed to download activity gpx: %w", err))
+	}
+	return nil
 }
