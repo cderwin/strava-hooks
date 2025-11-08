@@ -1,10 +1,14 @@
 module github.com/cderwin/skintrackr
 
-go 1.25.3
+go 1.24
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/redis/go-redis/v9 v9.16.0
+)
+
+require (
 	github.com/tkrajina/gpxgo v1.4.0
 	github.com/urfave/cli/v3 v3.5.0
 	golang.org/x/crypto v0.38.0
