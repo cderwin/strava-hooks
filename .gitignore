@@ -36,3 +36,4 @@ strava-hooks
 strava_debug
 
 .claude/
+.env

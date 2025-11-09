@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: strava-hooks-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: strava-hooks-app
+    ports:
+      - "8080:8080"
+    environment:
+      # App configuration
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      APP_SECRET: ${APP_SECRET}
+
+      # Strava OAuth credentials
+      STRAVA_CLIENT_ID: ${STRAVA_CLIENT_ID}
+      STRAVA_CLIENT_SECRET: ${STRAVA_CLIENT_SECRET}
+
+      # Redis connection - points to the redis service
+      UPSTASH_REDIS_URL: redis://redis:6379
+
+      # Optional: Debug flag for HTTP response serialization
+      DEBUG_STRAVA_RESPONSE_BODY: ${DEBUG_STRAVA_RESPONSE_BODY:-false}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+    driver: local
