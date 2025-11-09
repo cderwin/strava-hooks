@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -215,7 +218,15 @@ func (c *StravaClient) performRequest(method string, url string, body io.Reader)
 	// saves response body to file for debugging when flag is set
 	var bodyReader io.Reader = response.Body
 	if DebugSerializeHTTPResponse {
-		bodyPath := "debug.txt"
+		randomBytes := make([]byte, 18)
+		if _, err := rand.Read(randomBytes); err != nil {
+			return nil, fmt.Errorf("error generating random bytes: %w", err)
+		}
+		pwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("error getting working directory: %w", err)
+		}
+		bodyPath := path.Join(pwd, fmt.Sprintf(".request-debug-%s.log", base64.StdEncoding.EncodeToString(randomBytes)))
 		slog.Debug("serializing response body for debugging", "method", method, "url", url, "body_path", bodyPath)
 
 		body, err := io.ReadAll(response.Body)
