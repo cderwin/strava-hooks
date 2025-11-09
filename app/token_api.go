@@ -49,9 +49,10 @@ func (s *ServerState) handleTokenStart(c echo.Context) error {
 
 // handleTokenCallback handles the OAuth callback and generates a JWT
 func (s *ServerState) handleTokenCallback(c echo.Context) error {
-	// Get the authorization code and state from query params
+	// Get the authorization code, state, and challenge from query params
 	code := c.QueryParam("code")
 	state := c.QueryParam("state")
+	challengeParam := c.QueryParam("challenge")
 
 	if code == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "No code in callback")
@@ -59,12 +60,21 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 	if state == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "No state in callback")
 	}
+	if challengeParam == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "No challenge in callback")
+	}
 
-	// Retrieve and verify the challenge code
-	challenge, err := s.store.GetOAuthState(state)
+	// Retrieve the stored challenge code using the state token
+	storedChallenge, err := s.store.GetOAuthState(state)
 	if err != nil {
 		slog.Error("invalid OAuth state", "err", err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired state token")
+	}
+
+	// Verify the challenge matches what was stored
+	if challengeParam != storedChallenge {
+		slog.Error("challenge mismatch", "provided", challengeParam, "stored", storedChallenge)
+		return echo.NewHTTPError(http.StatusForbidden, "Challenge verification failed")
 	}
 
 	// Exchange code for access token
@@ -74,7 +84,7 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to exchange temporary code with strava")
 	}
 
-	slog.Info("Token exchange completed for token API", "athlete_id", token.Athlete.ID, "athlete_username", token.Athlete.Username, "challenge", challenge)
+	slog.Info("Token exchange completed for token API", "athlete_id", token.Athlete.ID, "athlete_username", token.Athlete.Username, "challenge", storedChallenge)
 
 	// Save the Strava token
 	err = s.store.SaveToken(token.Athlete.ID, TokenInfo{
@@ -108,7 +118,7 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 		"access_token": jwtToken,
 		"token_type":   "Bearer",
 		"athlete_id":   token.Athlete.ID,
-		"challenge":    challenge,
+		"challenge":    storedChallenge,
 	}
 
 	return c.JSON(http.StatusOK, response)
@@ -135,6 +145,16 @@ func (s *ServerState) handleTokenVerify(c echo.Context) error {
 	if err != nil {
 		slog.Error("JWT verification failed", "err", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid or expired token")
+	}
+
+	// Check if the token has expired
+	if claims.ExpiresAt < time.Now().Unix() {
+		slog.Info("token has expired", "expires_at", claims.ExpiresAt, "athlete_id", claims.AthleteID)
+		return echo.NewHTTPError(http.StatusUnauthorized, map[string]interface{}{
+			"error":      "token_expired",
+			"message":    "Token has expired",
+			"expires_at": claims.ExpiresAt,
+		})
 	}
 
 	// Check if the token has been revoked
