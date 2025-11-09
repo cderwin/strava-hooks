@@ -11,14 +11,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const (
+var (
 	authUrl  = "https://www.strava.com/oauth/authorize"
 	tokenUrl = "https://www.strava.com/oauth/token"
 )
 
 type ServerState struct {
-	config     Config
-	tokenStore TokenStore
+	config       Config
+	store        Store
+	stravaClient StravaClient
 }
 
 func NewServer() ServerState {
@@ -29,7 +30,18 @@ func NewServer() ServerState {
 		panic(err)
 	}
 	redisClient := redis.NewClient(redisOptions)
-	return ServerState{config: config, tokenStore: TokenStore{client: redisClient, ctx: context.Background(), config: &config}}
+	// Create a StravaClient without a token for OAuth and API requests
+	stravaClient := NewStravaClient("")
+	return ServerState{
+		config: config,
+		store: Store{
+			client:       redisClient,
+			ctx:          context.Background(),
+			config:       &config,
+			stravaClient: &stravaClient,
+		},
+		stravaClient: stravaClient,
+	}
 }
 
 func (s *ServerState) RunForever() {
@@ -71,7 +83,7 @@ func (s *ServerState) RunForever() {
 	}))
 
 	slog.Info("Establishing subscriptions in background")
-	go EstablishSubscriptions(&s.config)
+	go EstablishSubscriptions(&s.config, &s.stravaClient)
 
 	slog.Info("starting server", "port", 8080)
 	e.Logger.Fatal(e.Start(":8080"))

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"io"
 
 	"github.com/labstack/echo/v4"
 )
@@ -16,19 +15,18 @@ const (
 )
 
 type PushEvent struct {
-	ObjectType string `json:"object_type"`
-	ObjectId int `json:"object_id"`
-	AspectType string `json:"aspect_type"`
-	Updates map[string]bool `json:"updates"`
-	OwnerId int `json:"owner_id"`
-	SubscriptionId int `json:"subscription_id"`
-	EventTime int `json:"event_time"`
+	ObjectType     string          `json:"object_type"`
+	ObjectId       int             `json:"object_id"`
+	AspectType     string          `json:"aspect_type"`
+	Updates        map[string]bool `json:"updates"`
+	OwnerId        int             `json:"owner_id"`
+	SubscriptionId int             `json:"subscription_id"`
+	EventTime      int             `json:"event_time"`
 }
 
 type SubscriptionsResponse struct {
 	Id int `json:"id"`
 }
-
 
 func (s *ServerState) handleSubscriptionCallback(c echo.Context) error {
 	if c.QueryParam("hub.verify_token") != s.config.VerifyToken {
@@ -58,7 +56,7 @@ func handlePushEvent(c echo.Context) error {
 	return nil
 }
 
-func EstablishSubscriptions(config *Config) {
+func EstablishSubscriptions(config *Config, client *StravaClient) {
 	slog.Info("fetching current subscription info")
 	subscriptionsUrlBuilder, err := url.Parse(subscriptionsUrl)
 	if err != nil {
@@ -69,49 +67,41 @@ func EstablishSubscriptions(config *Config) {
 	queryParams.Add("client_id", config.StravaClientId)
 	queryParams.Add("client_secret", config.StravaClientSecret)
 	subscriptionsUrlBuilder.RawQuery = queryParams.Encode()
-	resp, err := http.Get(subscriptionsUrlBuilder.String())
+
+	body, err := client.performRequest("GET", subscriptionsUrlBuilder.String(), nil)
 	if err != nil {
 		slog.Error("error fetching subscription: http request failed", "err", err)
 		return
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			slog.Error("Error fetching subscription: reading body failed", "err", err)
-		}
+	var currentSubscriptions []SubscriptionsResponse
+	err = json.NewDecoder(body).Decode(&currentSubscriptions)
+	if err != nil {
+		slog.Error("error fetching subscription: decoding response failed", "err", err)
+		return
+	}
 
-		var currentSubscriptions []SubscriptionsResponse
-		err = json.Unmarshal(body, &currentSubscriptions)
-		if err != nil {
-			slog.Error("error fetching subscription: decoding response failed", "err", err, "body", string(body))
-			return
-		}
-
-		if len(currentSubscriptions) > 0 {
-			slog.Info("fetched current subscription", "subscription_id", currentSubscriptions[0].Id)
-			return
-		}
-	} else {
-		slog.Warn("error fetching subscription: non-200 status code", "status_code", resp.StatusCode)
+	if len(currentSubscriptions) > 0 {
+		slog.Info("fetched current subscription", "subscription_id", currentSubscriptions[0].Id)
+		return
 	}
 
 	slog.Info("no existing subscription found, will attempt to create one")
-	formData := url.Values{}
-	formData.Add("client_id", config.StravaClientId)
-	formData.Add("client_secret", config.StravaClientSecret)
-	formData.Add("callback_url", fmt.Sprintf("%s/subscriptions/callback", config.BaseUrl))
-	formData.Add("verify_token", config.VerifyToken)
-	resp, err = http.PostForm(subscriptionsUrl, formData)
+	formData := map[string]string{
+		"client_id":     config.StravaClientId,
+		"client_secret": config.StravaClientSecret,
+		"callback_url":  fmt.Sprintf("%s/subscriptions/callback", config.BaseUrl),
+		"verify_token":  config.VerifyToken,
+	}
+
+	body, err = client.performRequestForm("POST", subscriptionsUrl, formData)
 	if err != nil {
 		slog.Error("error creating subscription: http request failed", "err", err)
 		return
 	}
-	defer resp.Body.Close()
 
 	var newSubscription SubscriptionsResponse
-	err = json.NewDecoder(resp.Body).Decode(&newSubscription)
+	err = json.NewDecoder(body).Decode(&newSubscription)
 	if err != nil {
 		slog.Error("error creating subscription: decoding response failed", "err", err)
 		return
