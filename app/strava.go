@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -18,9 +19,12 @@ import (
 	"github.com/tkrajina/gpxgo/gpx"
 )
 
+var (
+	ActivityUrl = "https://www.strava.com/api/v3/activities/%s"
+	StreamsUrl  = "https://www.strava.com/api/v3/activities/%s/streams?keys=latlng,altitude,time"
+)
+
 const (
-	ActivityUrl  = "https://www.strava.com/api/v3/activities/%s"
-	StreamsUrl   = "https://www.strava.com/api/v3/activities/%s/streams?keys=latlng,altitude,time"
 	xsiSchemaLoc = "http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/GpxExtensions/v3 http://www.garmin.com/xmlschemas/GpxExtensionsv3.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd"
 )
 
@@ -203,12 +207,38 @@ func buildGpx(StreamPoints []StravaStreamPoint, metadata GpxMetadata) (gpx.GPX, 
 }
 
 func (c *StravaClient) performRequest(method string, url string, body io.Reader) (io.Reader, error) {
+	return c.performRequestWithHeaders(method, url, body, nil)
+}
+
+func (c *StravaClient) performRequestForm(method string, requestUrl string, formData map[string]string) (io.Reader, error) {
+	data := url.Values{}
+	for key, value := range formData {
+		data.Set(key, value)
+	}
+
+	headers := map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	}
+
+	return c.performRequestWithHeaders(method, requestUrl, strings.NewReader(data.Encode()), headers)
+}
+
+func (c *StravaClient) performRequestWithHeaders(method string, url string, body io.Reader, headers map[string]string) (io.Reader, error) {
 	request, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
 	}
 
-	request.Header["Authorization"] = []string{fmt.Sprintf("Bearer %s", c.Token)}
+	// Only add Bearer token if one is configured
+	if c.Token != "" {
+		request.Header["Authorization"] = []string{fmt.Sprintf("Bearer %s", c.Token)}
+	}
+
+	// Add any additional headers
+	for key, value := range headers {
+		request.Header[key] = []string{value}
+	}
+
 	response, err := c.client.Do(request)
 	if err != nil {
 		slog.Error("unknown http exception", "method", method, "url", url, "err", err)

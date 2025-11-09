@@ -2,8 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -50,7 +48,7 @@ func (s *ServerState) handleCallback(c echo.Context) error {
 	}
 
 	// Exchange code for access token
-	token, err := exchangeCode(code, &s.config)
+	token, err := exchangeCode(code, &s.config, &s.stravaClient)
 	if err != nil {
 		slog.Error("failed to exchange code with strava", "err", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to exchange temporary code with strava")
@@ -73,30 +71,21 @@ func (s *ServerState) handleCallback(c echo.Context) error {
 	return nil
 }
 
-func exchangeCode(code string, config *Config) (*TokenResponse, error) {
-	data := url.Values{}
-	data.Set("client_id", config.StravaClientId)
-	data.Set("client_secret", config.StravaClientSecret)
-	data.Set("code", code)
-	data.Set("grant_type", "authorization_code")
-
-	resp, err := http.PostForm(tokenUrl, data)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+func exchangeCode(code string, config *Config, client *StravaClient) (*TokenResponse, error) {
+	formData := map[string]string{
+		"client_id":     config.StravaClientId,
+		"client_secret": config.StravaClientSecret,
+		"code":          code,
+		"grant_type":    "authorization_code",
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange failed: %s", body)
+	body, err := client.performRequestForm("POST", tokenUrl, formData)
+	if err != nil {
+		return nil, err
 	}
 
 	var token TokenResponse
-	if err := json.Unmarshal(body, &token); err != nil {
+	if err := json.NewDecoder(body).Decode(&token); err != nil {
 		return nil, err
 	}
 

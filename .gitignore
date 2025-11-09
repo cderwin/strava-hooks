@@ -34,3 +34,5 @@ go.work.sum
 # executables
 strava-hooks
 strava_debug
+
+.claude/

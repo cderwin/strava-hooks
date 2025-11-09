@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"time"
 
 	"golang.org/x/crypto/nacl/secretbox"
@@ -19,16 +17,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Store struct {
-	client *redis.Client
-	ctx    context.Context
-	config *Config
-}
-
 type TokenInfo struct {
 	AccessToken  string
 	RefreshToken string
-	ExpiresAt    int
+	ExpiresAt    int64
+}
+
+type Store struct {
+	client       *redis.Client
+	ctx          context.Context
+	config       *Config
+	stravaClient *StravaClient
 }
 
 func (s *Store) FetchToken(AthleteId int) (string, error) {
@@ -101,19 +100,21 @@ func (s *Store) fetchTokenInfo(athleteId int) (*TokenInfo, error) {
 }
 
 func (s *Store) refreshToken(AthleteId int, Token TokenInfo) (*TokenInfo, error) {
-	queryParams := url.Values{}
-	queryParams.Add("client_id", s.config.StravaClientId)
-	queryParams.Add("client_secret", s.config.StravaClientSecret)
-	queryParams.Add("grant_type", "refresh_token")
-	queryParams.Add("refresh_token", Token.RefreshToken)
-	resp, err := http.PostForm(tokenUrl, queryParams)
+	formData := map[string]string{
+		"client_id":     s.config.StravaClientId,
+		"client_secret": s.config.StravaClientSecret,
+		"grant_type":    "refresh_token",
+		"refresh_token": Token.RefreshToken,
+	}
+
+	body, err := s.stravaClient.performRequestForm("POST", tokenUrl, formData)
 	if err != nil {
 		slog.Error("error refreshing token", "err", err)
 		return nil, err
 	}
 
 	var newToken TokenInfo
-	err = json.NewDecoder(resp.Body).Decode(&newToken)
+	err = json.NewDecoder(body).Decode(&newToken)
 	if err != nil {
 		slog.Error("error decoding refresh token response", "err", err)
 		return nil, err
