@@ -156,3 +156,78 @@ func (s *Store) GetOAuthState(state string) (string, error) {
 
 	return challenge, nil
 }
+
+// SaveJWTToken stores JWT metadata in Redis for revocation tracking
+// The token is stored with a TTL matching its expiration time
+func (s *Store) SaveJWTToken(jti string, athleteID int, issuedAt time.Time, expiresAt time.Time) error {
+	key := fmt.Sprintf("jwt:jti:%s", jti)
+
+	// Calculate TTL based on expiration time
+	ttl := time.Until(expiresAt)
+	if ttl <= 0 {
+		return fmt.Errorf("token already expired")
+	}
+
+	// Store token metadata
+	data := map[string]interface{}{
+		"athlete_id": athleteID,
+		"issued_at":  issuedAt.Unix(),
+		"expires_at": expiresAt.Unix(),
+	}
+
+	err := s.client.HSet(s.ctx, key, data).Err()
+	if err != nil {
+		return fmt.Errorf("failed to save JWT metadata: %w", err)
+	}
+
+	// Set expiration
+	err = s.client.Expire(s.ctx, key, ttl).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set JWT expiration: %w", err)
+	}
+
+	slog.Info("saved JWT token metadata", "jti", jti, "athlete_id", athleteID)
+	return nil
+}
+
+// RevokeJWTToken marks a JWT token as revoked
+// The revocation is stored until the token's expiration time
+func (s *Store) RevokeJWTToken(jti string) error {
+	// First, check if the token exists
+	jwtKey := fmt.Sprintf("jwt:jti:%s", jti)
+	exists, err := s.client.Exists(s.ctx, jwtKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check token existence: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("token not found or already expired")
+	}
+
+	// Get the token's expiration time
+	ttl, err := s.client.TTL(s.ctx, jwtKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get token TTL: %w", err)
+	}
+
+	// Mark as revoked with the same TTL
+	revokeKey := fmt.Sprintf("jwt:revoked:%s", jti)
+	err = s.client.Set(s.ctx, revokeKey, time.Now().Unix(), ttl).Err()
+	if err != nil {
+		return fmt.Errorf("failed to revoke token: %w", err)
+	}
+
+	slog.Info("revoked JWT token", "jti", jti)
+	return nil
+}
+
+// IsJWTRevoked checks if a JWT token has been revoked
+func (s *Store) IsJWTRevoked(jti string) (bool, error) {
+	revokeKey := fmt.Sprintf("jwt:revoked:%s", jti)
+
+	exists, err := s.client.Exists(s.ctx, revokeKey).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to check revocation status: %w", err)
+	}
+
+	return exists > 0, nil
+}

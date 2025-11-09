@@ -87,15 +87,25 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 	}
 
 	// Generate JWT with 30-day expiration
-	jwt, err := GenerateJWT(token.Athlete.ID, s.config.Secret, 30*24*time.Hour)
+	expirationDuration := 30 * 24 * time.Hour
+	jwtToken, jti, err := GenerateJWT(token.Athlete.ID, s.config.Secret, expirationDuration)
 	if err != nil {
 		slog.Error("failed to generate JWT", "err", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate access token")
 	}
 
+	// Store JWT metadata in Redis for revocation tracking
+	issuedAt := time.Now()
+	expiresAt := issuedAt.Add(expirationDuration)
+	err = s.store.SaveJWTToken(jti, token.Athlete.ID, issuedAt, expiresAt)
+	if err != nil {
+		slog.Error("failed to save JWT metadata", "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save token metadata")
+	}
+
 	// Return the JWT
 	response := map[string]interface{}{
-		"access_token": jwt,
+		"access_token": jwtToken,
 		"token_type":   "Bearer",
 		"athlete_id":   token.Athlete.ID,
 		"challenge":    challenge,
@@ -127,12 +137,74 @@ func (s *ServerState) handleTokenVerify(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid or expired token")
 	}
 
+	// Check if the token has been revoked
+	revoked, err := s.store.IsJWTRevoked(claims.JTI)
+	if err != nil {
+		slog.Error("failed to check revocation status", "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to verify token status")
+	}
+	if revoked {
+		slog.Info("token has been revoked", "jti", claims.JTI, "athlete_id", claims.AthleteID)
+		return echo.NewHTTPError(http.StatusUnauthorized, "Token has been revoked")
+	}
+
 	// Return the claims
 	response := map[string]interface{}{
 		"valid":      true,
 		"athlete_id": claims.AthleteID,
 		"expires_at": claims.ExpiresAt,
 		"issued_at":  claims.IssuedAt.Unix(),
+		"jti":        claims.JTI,
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+// handleTokenRevoke revokes a JWT token
+func (s *ServerState) handleTokenRevoke(c echo.Context) error {
+	// Get token from Authorization header
+	authHeader := c.Request().Header.Get("Authorization")
+	if authHeader == "" {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
+	}
+
+	// Extract token (format: "Bearer <token>")
+	var tokenString string
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		tokenString = authHeader[7:]
+	} else {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid authorization format")
+	}
+
+	// Verify the JWT to get the JTI
+	claims, err := VerifyJWT(tokenString, s.config.Secret)
+	if err != nil {
+		slog.Error("JWT verification failed for revocation", "err", err)
+		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid or expired token")
+	}
+
+	// Check if already revoked
+	revoked, err := s.store.IsJWTRevoked(claims.JTI)
+	if err != nil {
+		slog.Error("failed to check revocation status", "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to check token status")
+	}
+	if revoked {
+		return echo.NewHTTPError(http.StatusBadRequest, "Token is already revoked")
+	}
+
+	// Revoke the token
+	err = s.store.RevokeJWTToken(claims.JTI)
+	if err != nil {
+		slog.Error("failed to revoke token", "err", err, "jti", claims.JTI)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to revoke token")
+	}
+
+	// Return success
+	response := map[string]interface{}{
+		"revoked":    true,
+		"jti":        claims.JTI,
+		"athlete_id": claims.AthleteID,
 	}
 
 	return c.JSON(http.StatusOK, response)

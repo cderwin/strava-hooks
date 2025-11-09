@@ -15,20 +15,32 @@ import (
 
 // TokenClaims represents the JWT claims for our access tokens
 type TokenClaims struct {
-	AthleteID int   `json:"athlete_id"`
-	ExpiresAt int64 `json:"expires_at"`
+	AthleteID int    `json:"athlete_id"`
+	ExpiresAt int64  `json:"expires_at"`
+	JTI       string `json:"jti"` // JWT ID for revocation tracking
 	jwt.RegisteredClaims
 }
 
+// generateJTI creates a random JWT ID for token revocation tracking
+func generateJTI() string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
 // GenerateJWT creates a new JWT token for the given athlete ID
-func GenerateJWT(athleteID int, secret string, expirationDuration time.Duration) (string, error) {
+// Returns the token string and the unique JWT ID (jti)
+func GenerateJWT(athleteID int, secret string, expirationDuration time.Duration) (string, string, error) {
 	now := time.Now()
 	expiresAt := now.Add(expirationDuration)
+	jti := generateJTI()
 
 	claims := TokenClaims{
 		AthleteID: athleteID,
 		ExpiresAt: expiresAt.Unix(),
+		JTI:       jti,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
@@ -36,7 +48,11 @@ func GenerateJWT(athleteID int, secret string, expirationDuration time.Duration)
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	tokenString, err := token.SignedString([]byte(secret))
+	if err != nil {
+		return "", "", err
+	}
+	return tokenString, jti, nil
 }
 
 // VerifyJWT validates a JWT token and returns the claims

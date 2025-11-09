@@ -63,6 +63,7 @@ func (s *ServerState) RunForever() {
 	e.GET("/api/token/start", s.handleTokenStart)
 	e.GET("/api/token/callback", s.handleTokenCallback)
 	e.POST("/api/token/verify", s.handleTokenVerify)
+	e.POST("/api/token/revoke", s.handleTokenRevoke)
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
