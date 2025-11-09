@@ -9,15 +9,10 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// handleTokenStart initiates the OAuth flow with a challenge code
+// handleTokenStart initiates the OAuth flow
 func (s *ServerState) handleTokenStart(c echo.Context) error {
-	challenge := c.QueryParam("challenge")
-	if challenge == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "challenge parameter is required")
-	}
-
-	// Save the challenge code and get a state token
-	state, err := s.store.SaveOAuthState(challenge)
+	// Generate and save a state token for CSRF protection
+	state, err := s.store.SaveOAuthState()
 	if err != nil {
 		slog.Error("failed to save OAuth state", "err", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to initiate OAuth flow")
@@ -49,10 +44,9 @@ func (s *ServerState) handleTokenStart(c echo.Context) error {
 
 // handleTokenCallback handles the OAuth callback and generates a JWT
 func (s *ServerState) handleTokenCallback(c echo.Context) error {
-	// Get the authorization code, state, and challenge from query params
+	// Get the authorization code and state from query params
 	code := c.QueryParam("code")
 	state := c.QueryParam("state")
-	challengeParam := c.QueryParam("challenge")
 
 	if code == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "No code in callback")
@@ -60,21 +54,12 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 	if state == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "No state in callback")
 	}
-	if challengeParam == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "No challenge in callback")
-	}
 
-	// Retrieve the stored challenge code using the state token
-	storedChallenge, err := s.store.GetOAuthState(state)
+	// Verify the state token (CSRF protection)
+	err := s.store.GetOAuthState(state)
 	if err != nil {
 		slog.Error("invalid OAuth state", "err", err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired state token")
-	}
-
-	// Verify the challenge matches what was stored
-	if challengeParam != storedChallenge {
-		slog.Error("challenge mismatch", "provided", challengeParam, "stored", storedChallenge)
-		return echo.NewHTTPError(http.StatusForbidden, "Challenge verification failed")
 	}
 
 	// Exchange code for access token
@@ -84,7 +69,7 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to exchange temporary code with strava")
 	}
 
-	slog.Info("Token exchange completed for token API", "athlete_id", token.Athlete.ID, "athlete_username", token.Athlete.Username, "challenge", storedChallenge)
+	slog.Info("Token exchange completed for token API", "athlete_id", token.Athlete.ID, "athlete_username", token.Athlete.Username)
 
 	// Save the Strava token
 	err = s.store.SaveToken(token.Athlete.ID, TokenInfo{
@@ -118,7 +103,6 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 		"access_token": jwtToken,
 		"token_type":   "Bearer",
 		"athlete_id":   token.Athlete.ID,
-		"challenge":    storedChallenge,
 	}
 
 	return c.JSON(http.StatusOK, response)
