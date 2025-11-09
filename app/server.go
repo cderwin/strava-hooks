@@ -32,11 +32,12 @@ func NewServer() ServerState {
 	redisClient := redis.NewClient(redisOptions)
 	// Create a StravaClient without a token for OAuth and API requests
 	stravaClient := NewStravaClient("")
+	ctx := context.Background()
 	return ServerState{
 		config: config,
 		store: Store{
 			client:       redisClient,
-			ctx:          context.Background(),
+			ctx:          ctx,
 			config:       &config,
 			stravaClient: &stravaClient,
 		},
@@ -57,6 +58,12 @@ func (s *ServerState) RunForever() {
 	e.GET("/oauth2/callback", s.handleCallback)
 	e.GET("/subscriptions/callback", s.handleSubscriptionCallback)
 	e.POST("/subscriptions/callback", handlePushEvent)
+
+	// token generation API
+	e.GET("/api/token/start", s.handleTokenStart)
+	e.GET("/api/token/callback", s.handleTokenCallback)
+	e.POST("/api/token/verify", s.handleTokenVerify)
+	e.POST("/api/token/revoke", s.handleTokenRevoke)
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)

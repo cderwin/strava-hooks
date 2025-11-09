@@ -3,16 +3,11 @@ package app
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"time"
-
-	"golang.org/x/crypto/nacl/secretbox"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -43,12 +38,12 @@ func (s *Store) SaveToken(athleteId int, token TokenInfo) error {
 	authKey := fmt.Sprintf("athlete:%d:strava-token", athleteId)
 	expiresAtString := fmt.Sprintf("%d", token.ExpiresAt)
 
-	encryptedAccessToken, err := encryptToken(token.AccessToken, s.config.Secret)
+	encryptedAccessToken, err := Encrypt(token.AccessToken, s.config.Secret)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt access token: %w", err)
 	}
 
-	encryptedRefreshToken, err := encryptToken(token.RefreshToken, s.config.Secret)
+	encryptedRefreshToken, err := Encrypt(token.RefreshToken, s.config.Secret)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt refresh token: %w", err)
 	}
@@ -77,14 +72,14 @@ func (s *Store) fetchTokenInfo(athleteId int) (*TokenInfo, error) {
 		return nil, err
 	}
 
-	tokenInfo.AccessToken, err = decryptToken(tokenInfo.AccessToken, s.config.Secret)
+	tokenInfo.AccessToken, err = Decrypt(tokenInfo.AccessToken, s.config.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt access token: %w", err)
 	}
 
-	tokenInfo.RefreshToken, err = decryptToken(tokenInfo.RefreshToken, s.config.Secret)
+	tokenInfo.RefreshToken, err = Decrypt(tokenInfo.RefreshToken, s.config.Secret)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt secret token: %w", err)
+		return nil, fmt.Errorf("failed to decrypt refresh token: %w", err)
 	}
 
 	if int64(tokenInfo.ExpiresAt) < time.Now().Unix() {
@@ -124,72 +119,115 @@ func (s *Store) refreshToken(AthleteId int, Token TokenInfo) (*TokenInfo, error)
 	return &newToken, nil
 }
 
-// SecretFromHex converts a hex-encoded string to a 32-byte secret key.
-// Returns an error if the decoded secret is less than 32 bytes.
-// If longer than 32 bytes, only the first 32 bytes are used.
-func secretFromHex(hexSecret string) (*[32]byte, error) {
-	decoded, err := hex.DecodeString(hexSecret)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode hex string: %w", err)
-	}
-
-	if len(decoded) < 32 {
-		return nil, fmt.Errorf("secret must be at least 32 bytes, got %d bytes", len(decoded))
-	}
-
-	var secret [32]byte
-	copy(secret[:], decoded[:32])
-	return &secret, nil
+// generateStateToken creates a random state token
+func generateStateToken() string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
 }
 
-// EncryptToken encrypts a token using NaCl secretbox with the provided secret.
-// The secret must be exactly 32 bytes. Returns base64-encoded ciphertext.
-func encryptToken(token string, secret string) (string, error) {
-	// Generate a random nonce
-	var nonce [24]byte
-	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
-	}
+// SaveOAuthState stores a state token in Redis for CSRF protection
+// Returns the state token
+func (s *Store) SaveOAuthState() (string, error) {
+	state := generateStateToken()
+	key := fmt.Sprintf("oauth:state:%s", state)
 
-	secretBytes, err := secretFromHex(secret)
+	// Store the state with a 10-minute expiration
+	err := s.client.Set(s.ctx, key, time.Now().Unix(), 10*time.Minute).Err()
 	if err != nil {
-		return "", fmt.Errorf("failed to decode secret: %w", err)
+		return "", fmt.Errorf("failed to save OAuth state: %w", err)
 	}
 
-	// Encrypt the token
-	encrypted := secretbox.Seal(nonce[:], []byte(token), &nonce, secretBytes)
-
-	// Encode to base64 for easy storage/transmission
-	return base64.StdEncoding.EncodeToString(encrypted), nil
+	return state, nil
 }
 
-// DecryptToken decrypts a base64-encoded encrypted token using NaCl secretbox.
-// The secret must be exactly 32 bytes. Returns the original token string.
-func decryptToken(encryptedToken string, secret string) (string, error) {
-	// Decode from base64
-	encrypted, err := base64.StdEncoding.DecodeString(encryptedToken)
+// GetOAuthState verifies and deletes a state token
+func (s *Store) GetOAuthState(state string) error {
+	key := fmt.Sprintf("oauth:state:%s", state)
+
+	// Get and delete the state in one operation
+	_, err := s.client.GetDel(s.ctx, key).Result()
+	if err == redis.Nil {
+		return fmt.Errorf("invalid or expired state token")
+	}
 	if err != nil {
-		return "", fmt.Errorf("failed to decode base64: %w", err)
+		return fmt.Errorf("failed to retrieve OAuth state: %w", err)
 	}
 
-	// Extract nonce (first 24 bytes)
-	if len(encrypted) < 24 {
-		return "", errors.New("ciphertext too short")
+	return nil
+}
+
+// SaveJWTToken stores JWT metadata in Redis for revocation tracking
+// The token is stored with a TTL matching its expiration time
+func (s *Store) SaveJWTToken(jti string, athleteID int, issuedAt time.Time, expiresAt time.Time) error {
+	key := fmt.Sprintf("jwt:jti:%s", jti)
+
+	// Calculate TTL based on expiration time
+	ttl := time.Until(expiresAt)
+	if ttl <= 0 {
+		return fmt.Errorf("token already expired")
 	}
 
-	var nonce [24]byte
-	copy(nonce[:], encrypted[:24])
+	// Store token metadata
+	data := map[string]interface{}{
+		"athlete_id": athleteID,
+		"issued_at":  issuedAt.Unix(),
+		"expires_at": expiresAt.Unix(),
+	}
 
-	secretBytes, err := secretFromHex(secret)
+	err := s.client.HSet(s.ctx, key, data).Err()
 	if err != nil {
-		return "", fmt.Errorf("failed to decode secret: %w", err)
+		return fmt.Errorf("failed to save JWT metadata: %w", err)
 	}
 
-	// Decrypt the token
-	decrypted, ok := secretbox.Open(nil, encrypted[24:], &nonce, secretBytes)
-	if !ok {
-		return "", errors.New("decryption failed: invalid secret or corrupted data")
+	// Set expiration
+	err = s.client.Expire(s.ctx, key, ttl).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set JWT expiration: %w", err)
 	}
 
-	return string(decrypted), nil
+	slog.Info("saved JWT token metadata", "jti", jti, "athlete_id", athleteID)
+	return nil
+}
+
+// RevokeJWTToken marks a JWT token as revoked
+// The revocation is stored until the token's expiration time
+func (s *Store) RevokeJWTToken(jti string) error {
+	// First, check if the token exists
+	jwtKey := fmt.Sprintf("jwt:jti:%s", jti)
+	exists, err := s.client.Exists(s.ctx, jwtKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check token existence: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("token not found or already expired")
+	}
+
+	// Get the token's expiration time
+	ttl, err := s.client.TTL(s.ctx, jwtKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get token TTL: %w", err)
+	}
+
+	// Mark as revoked with the same TTL
+	revokeKey := fmt.Sprintf("jwt:revoked:%s", jti)
+	err = s.client.Set(s.ctx, revokeKey, time.Now().Unix(), ttl).Err()
+	if err != nil {
+		return fmt.Errorf("failed to revoke token: %w", err)
+	}
+
+	slog.Info("revoked JWT token", "jti", jti)
+	return nil
+}
+
+// IsJWTRevoked checks if a JWT token has been revoked
+func (s *Store) IsJWTRevoked(jti string) (bool, error) {
+	revokeKey := fmt.Sprintf("jwt:revoked:%s", jti)
+
+	exists, err := s.client.Exists(s.ctx, revokeKey).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to check revocation status: %w", err)
+	}
+
+	return exists > 0, nil
 }
