@@ -17,7 +17,7 @@ func (s *ServerState) handleTokenStart(c echo.Context) error {
 	}
 
 	// Save the challenge code and get a state token
-	state, err := s.oauthState.SaveState(challenge)
+	state, err := s.store.SaveOAuthState(challenge)
 	if err != nil {
 		slog.Error("failed to save OAuth state", "err", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to initiate OAuth flow")
@@ -61,7 +61,7 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 	}
 
 	// Retrieve and verify the challenge code
-	challenge, err := s.oauthState.GetState(state)
+	challenge, err := s.store.GetOAuthState(state)
 	if err != nil {
 		slog.Error("invalid OAuth state", "err", err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired state token")

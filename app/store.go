@@ -193,3 +193,41 @@ func decryptToken(encryptedToken string, secret string) (string, error) {
 
 	return string(decrypted), nil
 }
+
+// generateStateToken creates a random state token
+func generateStateToken() string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
+// SaveOAuthState stores the challenge code with a state token in Redis
+// Returns the state token
+func (s *Store) SaveOAuthState(challenge string) (string, error) {
+	state := generateStateToken()
+	key := fmt.Sprintf("oauth:state:%s", state)
+
+	// Store the challenge with a 10-minute expiration
+	err := s.client.Set(s.ctx, key, challenge, 10*time.Minute).Err()
+	if err != nil {
+		return "", fmt.Errorf("failed to save OAuth state: %w", err)
+	}
+
+	return state, nil
+}
+
+// GetOAuthState retrieves and deletes the challenge code for a given state token
+func (s *Store) GetOAuthState(state string) (string, error) {
+	key := fmt.Sprintf("oauth:state:%s", state)
+
+	// Get and delete the state in one operation
+	challenge, err := s.client.GetDel(s.ctx, key).Result()
+	if err == redis.Nil {
+		return "", fmt.Errorf("invalid or expired state token")
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve OAuth state: %w", err)
+	}
+
+	return challenge, nil
+}

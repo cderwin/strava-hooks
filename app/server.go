@@ -20,7 +20,6 @@ type ServerState struct {
 	config       Config
 	store        Store
 	stravaClient StravaClient
-	oauthState   OAuthState
 }
 
 func NewServer() ServerState {
@@ -43,7 +42,6 @@ func NewServer() ServerState {
 			stravaClient: &stravaClient,
 		},
 		stravaClient: stravaClient,
-		oauthState:   OAuthState{client: redisClient, ctx: ctx},
 	}
 }
 
