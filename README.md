@@ -1,4 +1,4 @@
-# Strava Hooks
+# Skintrackr
 
 A webhook server for Strava activity notifications with OAuth integration and Redis-based token management.
 

@@ -3,7 +3,7 @@ version: '3.8'
 services:
   redis:
     image: redis:7-alpine
-    container_name: strava-hooks-redis
+    container_name: skintrackr-redis
     ports:
       - "6379:6379"
     volumes:
@@ -18,7 +18,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: strava-hooks-app
+    container_name: skintrackr-app
     ports:
       - "8080:8080"
     environment:

@@ -1,8 +1,8 @@
 build:
-    docker build . -t strava-hooks
+    docker build . -t skintrackr
 
 start:
-    docker run --rm --env-file=.env -p 8080:8080 strava-hooks
+    docker run --rm --env-file=.env -p 8080:8080 skintrackr
 
 # Docker Compose commands for local end-to-end testing
 compose-up:

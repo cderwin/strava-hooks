@@ -1,6 +1,6 @@
 package main
 
-import "github.com/cderwin/strava-hooks/app"
+import "github.com/cderwin/skintrackr/app"
 
 func main() {
 	server := app.NewServer()

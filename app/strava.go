@@ -202,7 +202,7 @@ func buildGpx(StreamPoints []StravaStreamPoint, metadata GpxMetadata) (gpx.GPX, 
 	}
 
 	gpxTrack := gpx.GPXTrack{Name: metadata.Name, Type: metadata.Type, Segments: []gpx.GPXTrackSegment{trackSegment}}
-	gpx := gpx.GPX{XmlSchemaLoc: xsiSchemaLoc, Attrs: gpx.NewGPXAttributes(xmlNsAttrs), Version: "1.1", Creator: "strava-hooks.fly.dev", Time: &metadata.Time, Tracks: []gpx.GPXTrack{gpxTrack}}
+	gpx := gpx.GPX{XmlSchemaLoc: xsiSchemaLoc, Attrs: gpx.NewGPXAttributes(xmlNsAttrs), Version: "1.1", Creator: "skintrackr.fly.dev", Time: &metadata.Time, Tracks: []gpx.GPXTrack{gpxTrack}}
 	return gpx, nil
 }
 

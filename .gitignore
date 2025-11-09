@@ -32,7 +32,7 @@ go.work.sum
 # .vscode/
 
 # executables
-strava-hooks
+skintrackr
 strava_debug
 
 .claude/

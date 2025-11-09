@@ -1,28 +1,28 @@
-# fly.toml app configuration file generated for strava-hooks on 2025-10-22T00:13:28-07:00
+# fly.toml app configuration file generated for skintrackr on 2025-10-22T00:13:28-07:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'strava-hooks'
+app = 'skintrackr'
 primary_region = 'sjc'
 
 [build]
-  [build.args]
-    GO_VERSION = '1.25.3'
+[build.args]
+GO_VERSION = '1.25.3'
 
 [env]
-  PORT = '8080'
-  APP_BASE_URL = "https://strava-hooks.fly.dev"
+PORT = '8080'
+APP_BASE_URL = "https://skintrackr.fly.dev"
 
 [http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
-  min_machines_running = 1
-  processes = ['app']
+internal_port = 8080
+force_https = true
+auto_stop_machines = 'stop'
+auto_start_machines = true
+min_machines_running = 1
+processes = ['app']
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
+memory = '1gb'
+cpu_kind = 'shared'
+cpus = 1

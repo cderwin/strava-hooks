@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/cderwin/strava-hooks/app"
+	"github.com/cderwin/skintrackr/app"
 	"github.com/urfave/cli/v3"
 )
 
