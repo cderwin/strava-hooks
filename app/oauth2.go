@@ -57,6 +57,7 @@ func (s *ServerState) handleCallback(c echo.Context) error {
 	slog.Info("Token exchange completed for oauth2 callback", "athlete_id", token.Athlete.ID, "athlete_username", token.Athlete.Username, "access_token", token.AccessToken)
 	err = s.store.SaveToken(token.Athlete.ID, TokenInfo{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, ExpiresAt: int64(token.ExpiresAt)})
 	if err != nil {
+		slog.Error("failed to save token to redis", "athlete_id", token.Athlete.ID, "err", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save token to redis")
 	}
 
