@@ -13,9 +13,9 @@ import (
 )
 
 type TokenInfo struct {
-	AccessToken  string
-	RefreshToken string
-	ExpiresAt    int64
+	AccessToken  string `json:"access_token" redis:"access_token"`
+	RefreshToken string `json:"refresh_token" redis:"refresh_token"`
+	ExpiresAt    int64  `json:"expires_at" redis:"expires_at"`
 }
 
 type Store struct {
@@ -40,8 +40,7 @@ func (s *Store) SaveToken(athleteId int, token TokenInfo) error {
 
 	encryptedAccessToken, err := Encrypt(token.AccessToken, s.config.Secret)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt access token: %w", err)
-	}
+		return fmt.Errorf("failed to encrypt access token: %w", err) }
 
 	encryptedRefreshToken, err := Encrypt(token.RefreshToken, s.config.Secret)
 	if err != nil {

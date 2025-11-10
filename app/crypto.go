@@ -57,7 +57,7 @@ func GenerateJWT(athleteID int, secret string, expirationDuration time.Duration)
 
 // VerifyJWT validates a JWT token and returns the claims
 func VerifyJWT(tokenString string, secret string) (*TokenClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (any, error) {
 		// Verify signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])

@@ -48,23 +48,7 @@ func NewServer() ServerState {
 func (s *ServerState) RunForever() {
 	e := echo.New()
 
-	// static files
-	e.Static("/static", "/usr/src/static")
-	e.File("/", "/usr/src/static/index.html")
-
-	// dynamic routes
-	e.GET("/healthcheck", handleHealthcheck)
-	e.GET("/oauth2/connect", s.handleConnect)
-	e.GET("/oauth2/callback", s.handleCallback)
-	e.GET("/subscriptions/callback", s.handleSubscriptionCallback)
-	e.POST("/subscriptions/callback", handlePushEvent)
-
-	// token generation API
-	e.GET("/api/token/start", s.handleTokenStart)
-	e.GET("/api/token/callback", s.handleTokenCallback)
-	e.POST("/api/token/verify", s.handleTokenVerify)
-	e.POST("/api/token/revoke", s.handleTokenRevoke)
-
+	// setup logging middleware
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
@@ -88,6 +72,27 @@ func (s *ServerState) RunForever() {
 			return nil
 		},
 	}))
+
+	// middleware
+	e.Use(middleware.Recover())
+
+	// static files
+	e.Static("/static", "/usr/src/static")
+	e.File("/", "/usr/src/static/index.html")
+
+	// dynamic routes
+	e.GET("/healthcheck", handleHealthcheck)
+	e.GET("/oauth2/connect", s.handleConnect)
+	e.GET("/oauth2/callback", s.handleCallback)
+	e.GET("/subscriptions/callback", s.handleSubscriptionCallback)
+	e.POST("/subscriptions/callback", handlePushEvent)
+
+	// token generation API
+	e.GET("/token/new", s.handleTokenStart)
+	e.GET("/token/callback", s.handleTokenCallback)
+	e.POST("/token/verify", s.handleTokenVerify)
+	e.POST("/token/revoke", s.handleTokenRevoke)
+	e.GET("/api/strava-token", s.handleStravaToken)
 
 	slog.Info("Establishing subscriptions in background")
 	go EstablishSubscriptions(&s.config, &s.stravaClient)

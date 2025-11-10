@@ -1,6 +1,8 @@
 package app
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -8,6 +10,17 @@ import (
 
 	"github.com/labstack/echo/v4"
 )
+
+type AuthTokenInfo struct {
+	token     string
+	valid     bool
+	athleteId int
+	expiresAt time.Time
+	issuedAt  time.Time
+	jti       string
+}
+
+// http request handlers
 
 // handleTokenStart initiates the OAuth flow
 func (s *ServerState) handleTokenStart(c echo.Context) error {
@@ -19,15 +32,17 @@ func (s *ServerState) handleTokenStart(c echo.Context) error {
 	}
 
 	// Build the redirect URL
-	redirectUrl, err := url.JoinPath(s.config.BaseUrl, "api/token/callback")
+	redirectUrl, err := url.JoinPath(s.config.BaseUrl, "token/callback")
 	if err != nil {
-		return err
+		slog.Error("error building redirect url", "base_url", s.config.BaseUrl, "err", err)
+		return fmt.Errorf("error building callback url: %w", err)
 	}
 
 	// Construct Strava authorization URL with state parameter
 	authorizationUrl, err := url.Parse(authUrl)
 	if err != nil {
-		return err
+		slog.Error("failed to parse auth url", "auth_url", authUrl, "err", err)
+		return fmt.Errorf("error parsing url: %w", err)
 	}
 
 	params := authorizationUrl.Query()
@@ -59,7 +74,7 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 	err := s.store.GetOAuthState(state)
 	if err != nil {
 		slog.Error("invalid OAuth state", "err", err)
-		return echo.NewHTTPError(http.StatusBadRequest, "Invalid or expired state token")
+		return echo.NewHTTPError(http.StatusForbidden, "Invalid or expired state token")
 	}
 
 	// Exchange code for access token
@@ -99,7 +114,7 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 	}
 
 	// Return the JWT
-	response := map[string]interface{}{
+	response := map[string]any{
 		"access_token": jwtToken,
 		"token_type":   "Bearer",
 		"athlete_id":   token.Athlete.ID,
@@ -110,58 +125,12 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 
 // handleTokenVerify verifies a JWT token
 func (s *ServerState) handleTokenVerify(c echo.Context) error {
-	// Get token from Authorization header
-	authHeader := c.Request().Header.Get("Authorization")
-	if authHeader == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
-	}
-
-	// Extract token (format: "Bearer <token>")
-	var tokenString string
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-		tokenString = authHeader[7:]
-	} else {
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid authorization format")
-	}
-
-	// Verify the JWT
-	claims, err := VerifyJWT(tokenString, s.config.Secret)
+	tokenInfo, err := s.AuthenticateRequest(c.Request())
 	if err != nil {
-		slog.Error("JWT verification failed", "err", err)
-		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid or expired token")
+		return echo.NewHTTPError(http.StatusUnauthorized, err)
 	}
 
-	// Check if the token has expired
-	if claims.ExpiresAt < time.Now().Unix() {
-		slog.Info("token has expired", "expires_at", claims.ExpiresAt, "athlete_id", claims.AthleteID)
-		return echo.NewHTTPError(http.StatusUnauthorized, map[string]interface{}{
-			"error":      "token_expired",
-			"message":    "Token has expired",
-			"expires_at": claims.ExpiresAt,
-		})
-	}
-
-	// Check if the token has been revoked
-	revoked, err := s.store.IsJWTRevoked(claims.JTI)
-	if err != nil {
-		slog.Error("failed to check revocation status", "err", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to verify token status")
-	}
-	if revoked {
-		slog.Info("token has been revoked", "jti", claims.JTI, "athlete_id", claims.AthleteID)
-		return echo.NewHTTPError(http.StatusUnauthorized, "Token has been revoked")
-	}
-
-	// Return the claims
-	response := map[string]interface{}{
-		"valid":      true,
-		"athlete_id": claims.AthleteID,
-		"expires_at": claims.ExpiresAt,
-		"issued_at":  claims.IssuedAt.Unix(),
-		"jti":        claims.JTI,
-	}
-
-	return c.JSON(http.StatusOK, response)
+	return c.JSON(http.StatusOK, tokenInfo)
 }
 
 // handleTokenRevoke revokes a JWT token
@@ -205,7 +174,7 @@ func (s *ServerState) handleTokenRevoke(c echo.Context) error {
 	}
 
 	// Return success
-	response := map[string]interface{}{
+	response := map[string]any{
 		"revoked":    true,
 		"jti":        claims.JTI,
 		"athlete_id": claims.AthleteID,
@@ -213,3 +182,79 @@ func (s *ServerState) handleTokenRevoke(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, response)
 }
+
+func (s *ServerState) handleStravaToken(c echo.Context) error {
+	tokenInfo, err := s.AuthenticateRequest(c.Request())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, err)
+	}
+
+	stravaToken, err := s.store.fetchTokenInfo(tokenInfo.athleteId)
+	if err != nil {
+		slog.Error("error fetching strava token", "ethlete_id", tokenInfo.athleteId, "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, err)
+	}
+	return c.JSON(http.StatusOK, stravaToken)
+}
+
+// public functions
+
+func (s *ServerState) AuthenticateRequest(request *http.Request) (AuthTokenInfo, error) {
+	// Get token from Authorization header
+	authHeader := request.Header.Get("Authorization")
+	if authHeader == "" {
+		return AuthTokenInfo{}, echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
+	}
+
+	// Extract token (format: "Bearer <token>")
+	var bearerToken string
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		bearerToken = authHeader[7:]
+	} else {
+		return AuthTokenInfo{}, echo.NewHTTPError(http.StatusUnauthorized, "Invalid authorization format")
+	}
+
+	tokenInfo, err := s.AuthenticateToken(bearerToken)
+	if err != nil {
+		return tokenInfo, echo.NewHTTPError(http.StatusForbidden, err)
+	}
+
+	return tokenInfo, nil
+}
+
+func (s *ServerState) AuthenticateToken(bearerToken string) (AuthTokenInfo, error) {
+	// Verify the JWT
+	claims, err := VerifyJWT(bearerToken, s.config.Secret)
+	if err != nil {
+		return AuthTokenInfo{}, errors.New("Invalid or expired token")
+	}
+
+	token := AuthTokenInfo{
+		token:     bearerToken,
+		valid:     false, // false until proven otherwise
+		athleteId: claims.AthleteID,
+		expiresAt: time.Unix(claims.ExpiresAt, 0),
+		issuedAt:  claims.IssuedAt.Time,
+		jti:       claims.JTI,
+	}
+
+	// Check if the token has expired
+	if token.expiresAt.Unix() < time.Now().Unix() {
+		return token, errors.New("token has expired")
+	}
+
+	// Check if the token has been revoked
+	revoked, err := s.store.IsJWTRevoked(claims.JTI)
+	if err != nil {
+		slog.Error("error checking revocation status", "err", err)
+		return token, errors.New("failed to verify token revocation status")
+	}
+	if revoked {
+		return token, errors.New("token has been revoked")
+	}
+
+	token.valid = true
+	return token, nil
+}
+
+// helpers
