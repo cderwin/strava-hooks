@@ -90,6 +90,7 @@ func (s *ServerState) RunForever() {
 	// token generation API
 	e.GET("/token/new", s.handleTokenStart)
 	e.GET("/token/callback", s.handleTokenCallback)
+	e.GET("/token/poll", s.handleTokenPoll)
 	e.POST("/token/verify", s.handleTokenVerify)
 	e.POST("/token/revoke", s.handleTokenRevoke)
 	e.GET("/api/strava-token", s.handleStravaToken)

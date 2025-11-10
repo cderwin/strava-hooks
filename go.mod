@@ -1,6 +1,6 @@
 module github.com/cderwin/skintrackr
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.1
@@ -9,9 +9,13 @@ require (
 )
 
 require (
+	github.com/google/uuid v1.6.0
+	github.com/pelletier/go-toml/v2 v2.2.4
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/tkrajina/gpxgo v1.4.0
 	github.com/urfave/cli/v3 v3.5.0
 	golang.org/x/crypto v0.38.0
+	golang.org/x/term v0.36.0
 )
 
 require (
@@ -23,7 +27,7 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	golang.org/x/net v0.40.0 // indirect
-	golang.org/x/sys v0.33.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 )

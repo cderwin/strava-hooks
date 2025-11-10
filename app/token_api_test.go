@@ -443,3 +443,45 @@ func TestTokenResponseStructure(t *testing.T) {
 		t.Error("response should contain athlete_id field")
 	}
 }
+
+// TestHandleTokenPoll_MissingSessionID tests that missing session_id returns error
+func TestHandleTokenPoll_MissingSessionID(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/token/poll", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	s := &ServerState{}
+
+	err := s.handleTokenPoll(c)
+
+	if err == nil {
+		t.Error("expected error for missing session_id parameter")
+	}
+
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("expected *echo.HTTPError, got %T", err)
+	}
+
+	if httpErr.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, httpErr.Code)
+	}
+}
+
+// TestHandleTokenPoll_SessionNotFound tests that non-existent session returns pending
+// Note: This test requires a mock Redis implementation to fully test.
+// For now, it documents the expected behavior.
+func TestHandleTokenPoll_SessionNotFound(t *testing.T) {
+	t.Skip("Skipping test that requires mock Redis - tested via integration tests")
+	// This test would verify the handler returns 202 when session doesn't exist
+	// In a real scenario, this would use miniredis or a mock Redis client
+}
+
+// TestHandleTokenStart_WithSessionID verifies session_id is accepted
+// Note: This test requires a mock Redis implementation to fully test.
+func TestHandleTokenStart_WithSessionID(t *testing.T) {
+	t.Skip("Skipping test that requires mock Redis - tested via integration tests")
+	// This test would verify that the handler accepts a session_id parameter
+	// In practice, it would need miniredis or a mock Redis to fully test
+}
