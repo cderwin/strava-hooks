@@ -24,8 +24,12 @@ type AuthTokenInfo struct {
 
 // handleTokenStart initiates the OAuth flow
 func (s *ServerState) handleTokenStart(c echo.Context) error {
+	// Check for optional session_id query parameter (for CLI polling)
+	sessionID := c.QueryParam("session_id")
+
 	// Generate and save a state token for CSRF protection
-	state, err := s.store.SaveOAuthState()
+	// If session_id is provided, it will be encoded in the state
+	state, err := s.store.SaveOAuthState(sessionID)
 	if err != nil {
 		slog.Error("failed to save OAuth state", "err", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to initiate OAuth flow")
@@ -70,8 +74,8 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "No state in callback")
 	}
 
-	// Verify the state token (CSRF protection)
-	err := s.store.GetOAuthState(state)
+	// Verify the state token (CSRF protection) and extract session_id if present
+	sessionID, err := s.store.GetOAuthState(state)
 	if err != nil {
 		slog.Error("invalid OAuth state", "err", err)
 		return echo.NewHTTPError(http.StatusForbidden, "Invalid or expired state token")
@@ -113,7 +117,34 @@ func (s *ServerState) handleTokenCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save token metadata")
 	}
 
-	// Return the JWT
+	// If this is a CLI session (session_id present), store JWT for polling and return HTML
+	if sessionID != "" {
+		err = s.store.SaveCLISession(sessionID, jwtToken)
+		if err != nil {
+			slog.Error("failed to save CLI session", "err", err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save CLI session")
+		}
+
+		// Return HTML success page
+		html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Authentication Successful</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 50px; }
+        .success { color: #22c55e; font-size: 24px; font-weight: bold; }
+        .message { color: #64748b; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="success">✓ Authentication Successful!</div>
+    <div class="message">You can close this window and return to your terminal.</div>
+</body>
+</html>`
+		return c.HTML(http.StatusOK, html)
+	}
+
+	// Return the JWT as JSON (for non-CLI flows)
 	response := map[string]any{
 		"access_token": jwtToken,
 		"token_type":   "Bearer",
@@ -195,6 +226,38 @@ func (s *ServerState) handleStravaToken(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err)
 	}
 	return c.JSON(http.StatusOK, stravaToken)
+}
+
+// handleTokenPoll allows CLI to poll for JWT token after OAuth completes
+func (s *ServerState) handleTokenPoll(c echo.Context) error {
+	sessionID := c.QueryParam("session_id")
+	if sessionID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "session_id is required")
+	}
+
+	// Try to retrieve the JWT from Redis
+	jwt, err := s.store.GetCLISession(sessionID)
+	if err != nil {
+		// Session not found or expired - return 202 to indicate pending
+		return c.JSON(http.StatusAccepted, map[string]string{
+			"status": "pending",
+		})
+	}
+
+	// Parse JWT to get expiration time
+	claims, err := VerifyJWT(jwt, s.config.Secret)
+	if err != nil {
+		slog.Error("failed to verify JWT from CLI session", "err", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Invalid token in session")
+	}
+
+	// Return the token and expiration
+	response := map[string]any{
+		"token":      jwt,
+		"expires_at": time.Unix(claims.ExpiresAt, 0).Format(time.RFC3339),
+	}
+
+	return c.JSON(http.StatusOK, response)
 }
 
 // public functions

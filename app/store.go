@@ -126,34 +126,72 @@ func generateStateToken() string {
 }
 
 // SaveOAuthState stores a state token in Redis for CSRF protection
-// Returns the state token
-func (s *Store) SaveOAuthState() (string, error) {
+// If sessionID is provided, it encodes it in the state token for CLI polling
+// Returns the state token (format: "token" or "token:sessionID")
+func (s *Store) SaveOAuthState(sessionID string) (string, error) {
 	state := generateStateToken()
 	key := fmt.Sprintf("oauth:state:%s", state)
 
+	// Store the session ID if provided, otherwise just store timestamp
+	var value string
+	if sessionID != "" {
+		value = sessionID
+	} else {
+		value = fmt.Sprintf("%d", time.Now().Unix())
+	}
+
 	// Store the state with a 10-minute expiration
-	err := s.client.Set(s.ctx, key, time.Now().Unix(), 10*time.Minute).Err()
+	err := s.client.Set(s.ctx, key, value, 10*time.Minute).Err()
 	if err != nil {
 		return "", fmt.Errorf("failed to save OAuth state: %w", err)
+	}
+
+	// If session ID provided, encode it in the returned state
+	if sessionID != "" {
+		state = fmt.Sprintf("%s:%s", state, sessionID)
 	}
 
 	return state, nil
 }
 
 // GetOAuthState verifies and deletes a state token
-func (s *Store) GetOAuthState(state string) error {
-	key := fmt.Sprintf("oauth:state:%s", state)
+// Returns the session ID if one was encoded in the state
+func (s *Store) GetOAuthState(state string) (string, error) {
+	// Extract session ID from state if present (format: "token:sessionID")
+	var stateToken, sessionID string
+	parts := []byte(state)
+	colonIndex := -1
+	for i, b := range parts {
+		if b == ':' {
+			colonIndex = i
+			break
+		}
+	}
+
+	if colonIndex > 0 {
+		stateToken = string(parts[:colonIndex])
+		sessionID = string(parts[colonIndex+1:])
+	} else {
+		stateToken = state
+	}
+
+	key := fmt.Sprintf("oauth:state:%s", stateToken)
 
 	// Get and delete the state in one operation
-	_, err := s.client.GetDel(s.ctx, key).Result()
+	storedValue, err := s.client.GetDel(s.ctx, key).Result()
 	if err == redis.Nil {
-		return fmt.Errorf("invalid or expired state token")
+		return "", fmt.Errorf("invalid or expired state token")
 	}
 	if err != nil {
-		return fmt.Errorf("failed to retrieve OAuth state: %w", err)
+		return "", fmt.Errorf("failed to retrieve OAuth state: %w", err)
 	}
 
-	return nil
+	// Verify the session ID matches if provided
+	if sessionID != "" && storedValue != sessionID {
+		return "", fmt.Errorf("session ID mismatch")
+	}
+
+	return sessionID, nil
 }
 
 // SaveJWTToken stores JWT metadata in Redis for revocation tracking
@@ -229,4 +267,34 @@ func (s *Store) IsJWTRevoked(jti string) (bool, error) {
 	}
 
 	return exists > 0, nil
+}
+
+// SaveCLISession stores a JWT token for CLI polling with a 60-second TTL
+func (s *Store) SaveCLISession(sessionID string, jwt string) error {
+	key := fmt.Sprintf("cli-session:%s", sessionID)
+
+	err := s.client.Set(s.ctx, key, jwt, 60*time.Second).Err()
+	if err != nil {
+		slog.Error("failed to save CLI session", "session_id", sessionID, "err", err)
+		return fmt.Errorf("failed to save CLI session: %w", err)
+	}
+
+	slog.Info("saved CLI session", "session_id", sessionID)
+	return nil
+}
+
+// GetCLISession retrieves a JWT token for CLI polling
+func (s *Store) GetCLISession(sessionID string) (string, error) {
+	key := fmt.Sprintf("cli-session:%s", sessionID)
+
+	jwt, err := s.client.Get(s.ctx, key).Result()
+	if err == redis.Nil {
+		return "", fmt.Errorf("session not found or expired")
+	}
+	if err != nil {
+		slog.Error("failed to retrieve CLI session", "session_id", sessionID, "err", err)
+		return "", fmt.Errorf("failed to retrieve CLI session: %w", err)
+	}
+
+	return jwt, nil
 }
